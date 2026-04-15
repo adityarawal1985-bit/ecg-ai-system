@@ -1,5 +1,17 @@
-ecg_clinic.db 
-icu_patients.db 
-__pycache__/ 
-.cache/ 
-*.pkl 
+# Databases
+ecg_clinic.db
+icu_patients.db
+
+# Cache
+__pycache__/
+.cache/
+.ipynb_checkpoints/
+
+# System files
+.vscode/
+.idea/
+
+# Python compiled files
+*.pyc
+
+# DO NOT IGNORE MODEL
