@@ -44,19 +44,38 @@ DB_PATH = os.path.join(BASE_DIR, "ecg_clinic.db")
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS records (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            patient_name TEXT,
-            age INTEGER,
-            patient_id TEXT,
-            ai_class INTEGER,
-            predicted_label TEXT,
-            model_confidence REAL,
-            heartbeat_count INTEGER,
-            timestamp TEXT
-        )
-    """)
+
+    # Check existing columns
+    c.execute("PRAGMA table_info(records)")
+    existing_cols = {row[1] for row in c.fetchall()}
+
+    if not existing_cols:
+        # Table doesn't exist yet — create fresh
+        c.execute("""
+            CREATE TABLE records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                patient_name TEXT,
+                age INTEGER,
+                patient_id TEXT,
+                ai_class INTEGER,
+                predicted_label TEXT,
+                model_confidence REAL,
+                heartbeat_count INTEGER,
+                timestamp TEXT
+            )
+        """)
+    else:
+        # Table exists — add any missing columns from the new schema
+        migrations = {
+            "ai_class":         "ALTER TABLE records ADD COLUMN ai_class INTEGER",
+            "predicted_label":  "ALTER TABLE records ADD COLUMN predicted_label TEXT",
+            "model_confidence": "ALTER TABLE records ADD COLUMN model_confidence REAL",
+            "heartbeat_count":  "ALTER TABLE records ADD COLUMN heartbeat_count INTEGER",
+        }
+        for col, sql in migrations.items():
+            if col not in existing_cols:
+                c.execute(sql)
+
     conn.commit()
     conn.close()
 
