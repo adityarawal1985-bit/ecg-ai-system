@@ -62,7 +62,7 @@ def save_record(name, age, pid, risk, status):
 # =========================================================
 # MODEL
 # =========================================================
-MODEL_PATH = os.path.join(BASE_DIR, "models", "ecg_model.pkl")
+MODEL_PATH = os.path.join(BASE_DIR, "..", "models", "ecg_model.pkl")
 
 @st.cache_resource
 def load_model():
