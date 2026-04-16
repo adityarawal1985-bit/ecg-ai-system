@@ -16,19 +16,19 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 
 # =========================================================
-# ECG AI CLINICAL SYSTEM (FINAL HOSPITAL READY VERSION)
+# CONFIG
 # =========================================================
-
 st.set_page_config(
     page_title="ECG AI Clinical System",
     page_icon="🫀",
     layout="wide"
 )
 
-# -----------------------------
+# =========================================================
 # DATABASE
-# -----------------------------
-DB_PATH = os.path.join(os.path.dirname(__file__), "ecg_clinic.db")
+# =========================================================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.path.join(BASE_DIR, "ecg_clinic.db")
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -59,25 +59,24 @@ def save_record(name, age, pid, risk, status):
     conn.commit()
     conn.close()
 
-# -----------------------------
+# =========================================================
 # MODEL
-# -----------------------------
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH = os.path.join(BASE_DIR, "..", "models", "ecg_model.pkl")
+# =========================================================
+MODEL_PATH = os.path.join(BASE_DIR, "models", "ecg_model.pkl")
 
 @st.cache_resource
 def load_model():
     if not os.path.exists(MODEL_PATH):
-        st.error("ECG Model not found.")
+        st.error("❌ ECG Model not found. Check models folder.")
         st.stop()
     with open(MODEL_PATH, "rb") as f:
         return pickle.load(f)
 
 model = load_model()
 
-# -----------------------------
+# =========================================================
 # UI
-# -----------------------------
+# =========================================================
 st.markdown("""
 <style>
 .title{font-size:34px;font-weight:900;color:#ff2d2d;}
@@ -92,9 +91,9 @@ mode = st.sidebar.selectbox("Mode", ["Single Patient", "Batch Research"])
 
 EXPECTED_LEN = 187
 
-# -----------------------------
+# =========================================================
 # PREPROCESS
-# -----------------------------
+# =========================================================
 def prepare(signal):
     signal = np.array(signal).astype(float)
     signal = (signal - np.mean(signal)) / (np.std(signal) + 1e-6)
@@ -106,21 +105,23 @@ def prepare(signal):
 
     return signal
 
-# -----------------------------
-# CLINICAL LABELS
-# -----------------------------
-def clinical_status(risk):
-    if risk < 0.4:
-        return "Normal Sinus Rhythm"
-    elif risk < 0.8:
-        return "Arrhythmia Detected"
-    else:
-        return "Abnormal Morphology (Critical)"
+# =========================================================
+# CLINICAL LABELS (FIXED)
+# =========================================================
+def clinical_status_class(pred_class):
+    mapping = {
+        0: "Normal Sinus Rhythm",
+        1: "Supraventricular Arrhythmia",
+        2: "Ventricular Arrhythmia",
+        3: "Fusion Beat",
+        4: "Unknown / Artifact"
+    }
+    return mapping.get(pred_class, "Unknown")
 
-# -----------------------------
+# =========================================================
 # ECG PLOT
-# -----------------------------
-def plot_ecg(signal, peaks=None, zoom=None):
+# =========================================================
+def plot_ecg(signal, peaks=None):
     fig = go.Figure()
 
     fig.add_trace(go.Scatter(y=signal, mode='lines', name='ECG Signal'))
@@ -134,15 +135,12 @@ def plot_ecg(signal, peaks=None, zoom=None):
             name='R-Peaks'
         ))
 
-    if zoom:
-        fig.update_xaxes(range=zoom)
-
     fig.update_layout(title="ECG Waveform", height=400)
     st.plotly_chart(fig, use_container_width=True)
 
-# -----------------------------
-# PDF GENERATOR (SAFE)
-# -----------------------------
+# =========================================================
+# PDF GENERATOR
+# =========================================================
 def generate_pdf(df, patient_name="ECG_Report"):
 
     tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
@@ -155,12 +153,10 @@ def generate_pdf(df, patient_name="ECG_Report"):
 
     content.append(Paragraph("🫀 Clinical ECG Report", styles["Title"]))
     content.append(Spacer(1, 12))
-
     content.append(Paragraph(f"Patient / Batch: {patient_name}", styles["Normal"]))
     content.append(Spacer(1, 12))
 
     table_data = [df.columns.to_list()] + df.values.tolist()
-
     table = Table(table_data)
 
     table.setStyle([
@@ -171,7 +167,6 @@ def generate_pdf(df, patient_name="ECG_Report"):
     ])
 
     content.append(table)
-
     doc.build(content)
 
     return file_path
@@ -192,26 +187,40 @@ if mode == "Single Patient":
 
     if file:
 
-        df = pd.read_csv(file)
-        signal = df.iloc[:, 0].values
+        try:
+            df = pd.read_csv(file)
+
+            if df.shape[1] == 0:
+                st.error("Invalid CSV format")
+                st.stop()
+
+            signal = df.iloc[:, 0].values
+
+        except:
+            st.error("Error reading CSV. Upload valid ECG file.")
+            st.stop()
 
         processed = prepare(signal)
         X = processed.reshape(1, -1)
 
         pred = model.predict(X)[0]
-        risk = model.predict_proba(X)[0][1] if hasattr(model, "predict_proba") else float(pred)
 
-        status = clinical_status(risk)
+        if hasattr(model, "predict_proba"):
+            probs = model.predict_proba(X)[0]
+            confidence = np.max(probs)
+        else:
+            confidence = float(pred)
 
+        status = clinical_status_class(pred)
         peaks, _ = find_peaks(processed, distance=20)
 
         st.subheader("🧠 Clinical Report")
 
         col1, col2 = st.columns(2)
-        col1.metric("Risk Score", f"{risk:.2f}")
+        col1.metric("Confidence", f"{confidence:.2f}")
         col2.metric("Status", status)
 
-        save_record(name, age, pid, risk, status)
+        save_record(name, age, pid, confidence, status)
 
         st.subheader("📈 ECG Waveform")
         plot_ecg(processed, peaks)
@@ -228,28 +237,33 @@ else:
     results = []
     signal_map = {}
 
-    df_res = None
-
     if files:
 
         for file in files:
 
-            df = pd.read_csv(file)
-            signal = df.iloc[:, 0].values
+            try:
+                df = pd.read_csv(file)
+                signal = df.iloc[:, 0].values
+            except:
+                continue
 
             processed = prepare(signal)
             X = processed.reshape(1, -1)
 
             pred = model.predict(X)[0]
-            risk = model.predict_proba(X)[0][1] if hasattr(model, "predict_proba") else float(pred)
 
-            status = clinical_status(risk)
+            if hasattr(model, "predict_proba"):
+                probs = model.predict_proba(X)[0]
+                confidence = np.max(probs)
+            else:
+                confidence = float(pred)
 
+            status = clinical_status_class(pred)
             peaks, _ = find_peaks(processed, distance=20)
 
             results.append({
                 "File": file.name,
-                "Risk": round(risk, 3),
+                "Confidence": round(confidence, 3),
                 "Status": status,
                 "HeartBeats": len(peaks)
             })
@@ -267,12 +281,9 @@ else:
             st.subheader("📈 ECG Waveform")
             plot_ecg(signal_map[selected])
 
-        # -----------------------------
-        # PDF DOWNLOAD (FINAL SAFE VERSION)
-        # -----------------------------
         st.subheader("📄 Export Clinical Report")
 
-        if df_res is not None and not df_res.empty:
+        if not df_res.empty:
 
             if st.button("📥 Generate PDF Report"):
 
@@ -286,11 +297,8 @@ else:
                         mime="application/pdf"
                     )
 
-        else:
-            st.info("🫀 Upload ECG files to generate report")
-
-# -----------------------------
+# =========================================================
 # FOOTER
-# -----------------------------
+# =========================================================
 st.markdown("---")
 st.caption("ECG Clinical System • Developed by Aditya Rawal (AI-assisted)")
