@@ -18,11 +18,7 @@ from reportlab.lib.pagesizes import A4
 # =========================================================
 # CONFIG
 # =========================================================
-st.set_page_config(
-    page_title="ECG AI Clinical System",
-    page_icon="🫀",
-    layout="wide"
-)
+st.set_page_config(page_title="ECG AI Clinical System", page_icon="🫀", layout="wide")
 
 # =========================================================
 # DATABASE
@@ -67,7 +63,7 @@ MODEL_PATH = os.path.join(BASE_DIR, "..", "models", "ecg_model.pkl")
 @st.cache_resource
 def load_model():
     if not os.path.exists(MODEL_PATH):
-        st.error("❌ ECG Model not found. Check models folder.")
+        st.error("❌ ECG Model not found.")
         st.stop()
     with open(MODEL_PATH, "rb") as f:
         return pickle.load(f)
@@ -77,15 +73,8 @@ model = load_model()
 # =========================================================
 # UI
 # =========================================================
-st.markdown("""
-<style>
-.title{font-size:34px;font-weight:900;color:#ff2d2d;}
-.sub{color:#9ca3af;font-size:14px;}
-</style>
-""", unsafe_allow_html=True)
-
-st.markdown("<div class='title'>🫀 CLINICAL ECG SYSTEM</div>", unsafe_allow_html=True)
-st.markdown("<div class='sub'>AI-assisted Clinical Decision Support System</div>", unsafe_allow_html=True)
+st.markdown("<h1 style='color:#ff2d2d;'>🫀 CLINICAL ECG SYSTEM</h1>", unsafe_allow_html=True)
+st.caption("AI-assisted Clinical Decision Support System")
 
 mode = st.sidebar.selectbox("Mode", ["Single Patient", "Batch Research"])
 
@@ -97,16 +86,10 @@ EXPECTED_LEN = 187
 def prepare(signal):
     signal = np.array(signal).astype(float)
     signal = (signal - np.mean(signal)) / (np.std(signal) + 1e-6)
-
-    if len(signal) < EXPECTED_LEN:
-        signal = np.pad(signal, (0, EXPECTED_LEN - len(signal)))
-    else:
-        signal = signal[:EXPECTED_LEN]
-
     return signal
 
 # =========================================================
-# CLINICAL LABELS (FIXED)
+# CLINICAL LABELS
 # =========================================================
 def clinical_status_class(pred_class):
     mapping = {
@@ -123,134 +106,161 @@ def clinical_status_class(pred_class):
 # =========================================================
 def plot_ecg(signal, peaks=None):
     fig = go.Figure()
-
-    fig.add_trace(go.Scatter(y=signal, mode='lines', name='ECG Signal'))
+    fig.add_trace(go.Scatter(y=signal, mode='lines', name='ECG'))
 
     if peaks is not None:
         fig.add_trace(go.Scatter(
             x=peaks,
             y=signal[peaks],
             mode='markers',
-            marker=dict(color='red', size=8),
-            name='R-Peaks'
+            marker=dict(color='red', size=6),
+            name='R-peaks'
         ))
 
-    fig.update_layout(title="ECG Waveform", height=400)
+    fig.update_layout(height=400)
     st.plotly_chart(fig, use_container_width=True)
 
 # =========================================================
-# PDF GENERATOR
+# 🔥 CORE FIX: BEAT-BASED PREDICTION
 # =========================================================
-def generate_pdf(df, patient_name="ECG_Report"):
+def predict_signal(signal):
+    peaks, _ = find_peaks(signal, distance=20)
 
-    tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-    file_path = tmp_file.name
-    tmp_file.close()
+    predictions = []
 
-    doc = SimpleDocTemplate(file_path, pagesize=A4)
+    for p in peaks:
+        start = max(0, p - 90)
+        end = min(len(signal), p + 97)
+
+        beat = signal[start:end]
+
+        if len(beat) < 187:
+            beat = np.pad(beat, (0, 187 - len(beat)))
+        else:
+            beat = beat[:187]
+
+        beat = (beat - np.mean(beat)) / (np.std(beat) + 1e-6)
+
+        X = beat.reshape(1, -1)
+
+        pred = model.predict(X)[0]
+        predictions.append(pred)
+
+    if len(predictions) == 0:
+        return 0, 0.0, []
+
+    final_class = max(set(predictions), key=predictions.count)
+    confidence = predictions.count(final_class) / len(predictions)
+
+    return final_class, confidence, peaks
+
+# =========================================================
+# PDF
+# =========================================================
+def generate_pdf(df):
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    path = tmp.name
+    tmp.close()
+
+    doc = SimpleDocTemplate(path, pagesize=A4)
     styles = getSampleStyleSheet()
+
     content = []
-
-    content.append(Paragraph("🫀 Clinical ECG Report", styles["Title"]))
-    content.append(Spacer(1, 12))
-    content.append(Paragraph(f"Patient / Batch: {patient_name}", styles["Normal"]))
+    content.append(Paragraph("ECG Clinical Report", styles["Title"]))
     content.append(Spacer(1, 12))
 
-    table_data = [df.columns.to_list()] + df.values.tolist()
-    table = Table(table_data)
-
+    table = Table([df.columns.tolist()] + df.values.tolist())
     table.setStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.grey),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-        ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
-        ("BACKGROUND", (0, 1), (-1, -1), colors.beige),
+        ("GRID", (0,0), (-1,-1), 0.5, colors.black)
     ])
 
     content.append(table)
     doc.build(content)
 
-    return file_path
+    return path
 
 # =========================================================
-# SINGLE PATIENT MODE
+# SINGLE PATIENT
 # =========================================================
-pred, confidence = predict_signal(processed)
-status = clinical_status_class(pred)
+if mode == "Single Patient":
+
+    st.subheader("Patient Info")
+
+    name = st.text_input("Name")
+    age = st.number_input("Age", 0, 120)
+    pid = st.text_input("Patient ID")
+
+    file = st.file_uploader("Upload ECG CSV", type=["csv"])
+
+    if file:
+        try:
+            df = pd.read_csv(file)
+            signal = df.iloc[:, 0].values
+        except:
+            st.error("Invalid CSV")
+            st.stop()
+
+        signal = prepare(signal)
+
+        pred, confidence, peaks = predict_signal(signal)
+        status = clinical_status_class(pred)
+
+        st.metric("Status", status)
+        st.metric("Confidence", f"{confidence:.2f}")
+
+        plot_ecg(signal, peaks)
+
+        save_record(name, age, pid, confidence, status)
 
 # =========================================================
 # BATCH MODE
 # =========================================================
-else;
+else:
 
-    st.subheader("📊 Batch ECG Analysis")
+    st.subheader("Batch Analysis")
 
     files = st.file_uploader("Upload multiple ECG CSV", type=["csv"], accept_multiple_files=True)
 
     results = []
-    signal_map = {}
+    signals = {}
 
     if files:
-
-        for file in files:
-
+        for f in files:
             try:
-                df = pd.read_csv(file)
-                signal = df.iloc[:, 0].values
+                df = pd.read_csv(f)
+                signal = prepare(df.iloc[:, 0].values)
+
+                pred, confidence, peaks = predict_signal(signal)
+                status = clinical_status_class(pred)
+
+                results.append({
+                    "File": f.name,
+                    "Status": status,
+                    "Confidence": round(confidence, 3),
+                    "Beats": len(peaks)
+                })
+
+                signals[f.name] = (signal, peaks)
+
             except:
                 continue
 
-            processed = prepare(signal)
-            X = processed.reshape(1, -1)
-
-            pred = model.predict(X)[0]
-
-            if hasattr(model, "predict_proba"):
-                probs = model.predict_proba(X)[0]
-                confidence = np.max(probs)
-            else:
-                confidence = float(pred)
-
-            status = clinical_status_class(pred)
-            peaks, _ = find_peaks(processed, distance=20)
-
-            results.append({
-                "File": file.name,
-                "Confidence": round(confidence, 3),
-                "Status": status,
-                "HeartBeats": len(peaks)
-            })
-
-            signal_map[file.name] = processed
-
         df_res = pd.DataFrame(results)
-
-        st.subheader("📊 Report Table")
         st.dataframe(df_res)
 
-        selected = st.selectbox("Select ECG", list(signal_map.keys()))
+        sel = st.selectbox("Select ECG", list(signals.keys()))
 
-        if selected:
-            st.subheader("📈 ECG Waveform")
-            plot_ecg(signal_map[selected])
+        if sel:
+            sig, pk = signals[sel]
+            plot_ecg(sig, pk)
 
-        st.subheader("📄 Export Clinical Report")
-
-        if not df_res.empty:
-
-            if st.button("📥 Generate PDF Report"):
-
-                pdf_path = generate_pdf(df_res, "AIIMS_ECG_Batch")
-
-                with open(pdf_path, "rb") as f:
-                    st.download_button(
-                        label="⬇ Download PDF Report",
-                        data=f,
-                        file_name="AIIMS_ECG_Clinical_Report.pdf",
-                        mime="application/pdf"
-                    )
+        if st.button("Generate PDF"):
+            path = generate_pdf(df_res)
+            with open(path, "rb") as f:
+                st.download_button("Download Report", f, "report.pdf")
 
 # =========================================================
 # FOOTER
 # =========================================================
 st.markdown("---")
-st.caption("ECG Clinical System • Developed by Aditya Rawal (AI-assisted)")
+st.caption("Developed by Aditya Rawal • AI-assisted system")
