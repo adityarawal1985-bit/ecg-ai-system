@@ -180,7 +180,7 @@ status = clinical_status_class(pred)
 # =========================================================
 # BATCH MODE
 # =========================================================
-else:
+else;
 
     st.subheader("📊 Batch ECG Analysis")
 
