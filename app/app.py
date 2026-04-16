@@ -525,3 +525,8 @@ st.caption(
     "Research Use Only — Not for Clinical Diagnosis | "
     f"Model trained on MIT-BIH Arrhythmia Database"
 )
+
+
+# Add to sidebar, right after mode selection
+st.sidebar.markdown("---")
+st.sidebar.caption("**Research Framework v1.0** — Model requires local fine-tuning for clinical use.")
