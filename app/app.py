@@ -174,56 +174,8 @@ def generate_pdf(df, patient_name="ECG_Report"):
 # =========================================================
 # SINGLE PATIENT MODE
 # =========================================================
-if mode == "Single Patient":
-
-    st.subheader("🧾 Patient Intake Form")
-
-    c1, c2, c3 = st.columns(3)
-    name = c1.text_input("Patient Name")
-    age = c2.number_input("Age", 0, 120, 30)
-    pid = c3.text_input("Patient ID")
-
-    file = st.file_uploader("Upload ECG CSV", type=["csv"])
-
-    if file:
-
-        try:
-            df = pd.read_csv(file)
-
-            if df.shape[1] == 0:
-                st.error("Invalid CSV format")
-                st.stop()
-
-            signal = df.iloc[:, 0].values
-
-        except:
-            st.error("Error reading CSV. Upload valid ECG file.")
-            st.stop()
-
-        processed = prepare(signal)
-        X = processed.reshape(1, -1)
-
-        pred = model.predict(X)[0]
-
-        if hasattr(model, "predict_proba"):
-            probs = model.predict_proba(X)[0]
-            confidence = np.max(probs)
-        else:
-            confidence = float(pred)
-
-        status = clinical_status_class(pred)
-        peaks, _ = find_peaks(processed, distance=20)
-
-        st.subheader("🧠 Clinical Report")
-
-        col1, col2 = st.columns(2)
-        col1.metric("Confidence", f"{confidence:.2f}")
-        col2.metric("Status", status)
-
-        save_record(name, age, pid, confidence, status)
-
-        st.subheader("📈 ECG Waveform")
-        plot_ecg(processed, peaks)
+pred, confidence = predict_signal(processed)
+status = clinical_status_class(pred)
 
 # =========================================================
 # BATCH MODE
